@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.env
+*.pyc
+logs/*.csv
+logs/raw_data/*.csv
+.streamlit/
+터미널 실행.txt
+old/
