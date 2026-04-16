@@ -32,6 +32,28 @@
 
 ---
 
+## 🖼️ 예제 화면
+
+### 1. 메인 대시보드
+전체 종목의 예측 결과와 확신도를 한눈에 확인할 수 있는 화면입니다.  
+상승 / 하락 / 관망 결과와 주요 뉴스 요약을 빠르게 훑어볼 수 있습니다.
+
+![메인 대시보드](images/dashboard_main.png)
+
+### 2. 종목 상세 분석
+선택한 종목의 뉴스 요약, 뉴스 출처, 차트 판정, 패턴 판정, 핵심 사유를 상세히 보여주는 화면입니다.  
+AI가 왜 해당 종목을 상승 혹은 관망으로 판단했는지 근거를 확인할 수 있습니다.
+
+![종목 상세 분석](images/detail_view.png)
+
+### 3. 차트 보기
+상세 화면에서 최근 주가 흐름과 이동평균선(MA20, MA60)을 함께 확인할 수 있는 차트 화면입니다.  
+기술적 흐름을 직관적으로 파악할 수 있도록 구성했습니다.
+
+![차트 보기](images/chart_view.png)
+
+---
+
 ## 🛠️ 기술 스택 (Tech Stack)
 
 - **Language**: Python 3.10+
@@ -47,6 +69,10 @@
 
 ```text
 Stock_Sentiment_Project/
+├── images/
+│   ├── dashboard_main.png
+│   ├── detail_view.png
+│   └── chart_view.png
 ├── src/
 │   ├── main_auto.py      # 🚀 자동 분석 엔진
 │   ├── web_app.py        # 📊 Streamlit 대시보드
