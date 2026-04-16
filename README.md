@@ -74,9 +74,14 @@ Stock_Sentiment_Project/
 │   ├── detail_view.png
 │   └── chart_view.png
 ├── src/
-│   ├── main_auto.py      # 🚀 자동 분석 엔진
-│   ├── web_app.py        # 📊 Streamlit 대시보드
-│   └── evaluator.py      # 🎯 예측 결과 평가 / 성과 통합
+│   ├── backtest_collector.py   # 📦 과거 데이터 수집 / 백테스트 관련
+│   ├── evaluator.py            # 🎯 예측 결과 평가 / 성과 통합
+│   ├── finance.py              # 💹 금융 데이터 처리 로직
+│   ├── macro.py                # 🛠️ 보조 실행 / 유틸 스크립트
+│   ├── main_auto.py            # 🚀 자동 분석 엔진
+│   ├── update_data.py          # 📥 주가 데이터 업데이트
+│   ├── visualize.py            # 📊 시각화 관련 스크립트
+│   └── web_app.py              # 🌐 Streamlit 대시보드
 ├── run_pipeline.py       # 🔄 전체 파이프라인 실행 파일
 ├── logs/
 │   ├── raw_data/         # 📦 종목별 원본 차트 데이터 (.csv)
