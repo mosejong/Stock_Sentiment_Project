@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import os
 from datetime import datetime
-import streamlit.components.v1 as components
 
 # 1. 페이지 설정
 st.set_page_config(page_title="Gemini Pro Insight", layout="wide", page_icon="💎")
@@ -44,10 +43,8 @@ st.markdown("""
     }
 
     .badge-keyword { background-color: #F59E0B; color: black; }
-    .badge-news { background-color: #8B5CF6; }
     .badge-chart { background-color: #0EA5E9; }
     .badge-pattern { background-color: #10B981; }
-    .badge-source { background-color: #64748B; }
 
     .section-title {
         font-size: 1.05rem;
@@ -90,6 +87,7 @@ st.markdown("""
 
 REPORT_PATH = "logs/daily_analysis_report.csv"
 
+
 def load_stock_chart_data(stock_name: str, ticker: str):
     possible_paths = [
         f"logs/raw_data/{stock_name}_5year_data.csv",
@@ -111,6 +109,7 @@ def load_stock_chart_data(stock_name: str, ticker: str):
                 return None
     return None
 
+
 def load_data():
     expected_columns = [
         "날짜", "종목명", "티커", "AI예측", "확신도",
@@ -126,7 +125,6 @@ def load_data():
         df.columns = df.columns.str.strip()
         df.columns = df.columns.str.replace("\ufeff", "", regex=False)
 
-        # 헤더가 없거나 꼬인 경우 대비
         if "확신도" not in df.columns:
             df = pd.read_csv(
                 REPORT_PATH,
@@ -160,10 +158,36 @@ def load_data():
 
 def get_prediction_color(pred_val: str):
     if "상승" in pred_val:
-        return "#FF4B4B"
+        return "#FF4B4B"   # 한국 주식 스타일: 상승 빨강
     elif "하락" in pred_val:
-        return "#3182CE"
-    return "#94A3B8"
+        return "#3182CE"   # 하락 파랑
+    return "#E5E7EB"
+
+
+def get_news_signal_color(signal: str):
+    signal = str(signal).strip()
+    if "호재" in signal:
+        return "#22C55E"   # 초록
+    if "악재" in signal:
+        return "#EF4444"   # 빨강
+    if "기대감" in signal:
+        return "#F59E0B"   # 노랑
+    return "#94A3B8"       # 회색
+
+
+def get_confidence_color(score):
+    try:
+        score = float(score)
+    except Exception:
+        return "#94A3B8"
+
+    if score >= 85:
+        return "#22C55E"   # 초록
+    elif score >= 70:
+        return "#F59E0B"   # 노랑
+    elif score >= 50:
+        return "#FB923C"   # 주황
+    return "#EF4444"       # 빨강
 
 
 def shorten_text(text: str, limit: int = 20):
@@ -211,6 +235,8 @@ if df is not None and not df.empty:
     # 사이드바 필터
     with st.sidebar:
         st.subheader("🔧 필터")
+        st.caption("예측 결과가 모두 선택되어 있으면 전체 보기입니다.")
+
         pred_filter = st.multiselect(
             "예측 결과",
             ["▲ 상승", "▼ 하락", "━ 관망"],
@@ -223,8 +249,12 @@ if df is not None and not df.empty:
             stock_list,
             key="stock_filter_widget"
         )
-        
+
         min_conf = st.slider("최소 확신도", 0, 100, 0)
+
+    # multiselect 전부 해제 방어
+    if not pred_filter:
+        pred_filter = ["▲ 상승", "▼ 하락", "━ 관망"]
 
     filtered_df = latest_df.copy()
     filtered_df = filtered_df[filtered_df["AI예측"].isin(pred_filter)]
@@ -238,17 +268,36 @@ if df is not None and not df.empty:
     with tab1:
         def style_df(row):
             styles = [''] * len(row)
-            if '상승' in str(row['AI예측']):
-                styles[1] = 'color: #FF4B4B; font-weight: bold'
-            elif '하락' in str(row['AI예측']):
-                styles[1] = 'color: #3182CE; font-weight: bold'
+
+            # 컬럼 순서:
+            # 종목명, AI예측, 확신도, 핫키워드, 주요뉴스, 뉴스판정
+            pred = str(row["AI예측"])
+            conf = row["확신도"]
+            news_signal = str(row["뉴스판정"])
+
+            # AI예측 색상
+            if "상승" in pred:
+                styles[1] = "color: #FF4B4B; font-weight: bold;"
+            elif "하락" in pred:
+                styles[1] = "color: #3182CE; font-weight: bold;"
+            else:
+                styles[1] = "color: #E5E7EB; font-weight: bold;"
+
+            # 확신도 색상
+            conf_color = get_confidence_color(conf)
+            styles[2] = f"color: {conf_color}; font-weight: bold;"
+
+            # 뉴스판정 색상
+            news_color = get_news_signal_color(news_signal)
+            styles[5] = f"color: {news_color}; font-weight: bold;"
+
             return styles
 
         display_df = filtered_df[[
             "종목명", "AI예측", "확신도", "핫키워드", "뉴스요약", "뉴스판정"
         ]].copy()
 
-        display_df["주요뉴스"] = display_df["뉴스요약"].apply(lambda x: shorten_text(x, 20))
+        display_df["주요뉴스"] = display_df["뉴스요약"].apply(lambda x: shorten_text(x, 35))
 
         display_df = display_df[[
             "종목명", "AI예측", "확신도", "핫키워드", "주요뉴스", "뉴스판정"
@@ -257,8 +306,17 @@ if df is not None and not df.empty:
         st.dataframe(
             display_df.style.apply(style_df, axis=1),
             use_container_width=True,
-            height=500
+            height=620,
+            column_config={
+                "종목명": st.column_config.TextColumn("종목명", width="small"),
+                "AI예측": st.column_config.TextColumn("AI예측", width="small"),
+                "확신도": st.column_config.NumberColumn("확신도", width="small"),
+                "핫키워드": st.column_config.TextColumn("핫키워드", width="medium"),
+                "주요뉴스": st.column_config.TextColumn("주요뉴스", width="large"),
+                "뉴스판정": st.column_config.TextColumn("뉴스판정", width="medium"),
+            }
         )
+
         st.write("### 🔎 종목 바로 보기")
 
         button_cols = st.columns(5)
@@ -291,51 +349,55 @@ if df is not None and not df.empty:
         else:
             current_label = selected_stock if selected_stock != "전체" else stock_filter
             st.markdown(f"### 현재 선택된 종목: {current_label}")
+
             for _, row in detail_df.iterrows():
                 pred_val = str(row["AI예측"])
                 accent_color = get_prediction_color(pred_val)
+                news_color = get_news_signal_color(row["뉴스판정"])
+                conf_color = get_confidence_color(row["확신도"])
+
                 reason_text = str(row["핵심사유"]).replace("\\n", "<br>").replace("•", "<br>•")
                 news_text = str(row["뉴스요약"]).replace("\\n", "<br>")
 
                 with st.container():
                     st.html(f"""
-    <div style="background-color: #161B22; border-left: 5px solid {accent_color}; padding: 22px; border-radius: 12px; margin-bottom: 22px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-            <span style="font-size: 1.5rem; font-weight: bold; color: white;">
-                {row['종목명']} <small style="color: #888; font-weight: normal;">({row['티커']})</small>
-            </span>
-            <span style="background-color: {accent_color}; color: white; padding: 6px 16px; border-radius: 20px; font-weight: bold; font-size: 0.95rem;">
-                {pred_val}
-            </span>
-        </div>
-
-        <div style="margin-bottom: 8px;">
-            <span class="mini-badge badge-keyword">키워드: {row['핫키워드']}</span>
-            <span class="mini-badge badge-news">뉴스: {row['뉴스판정']}</span>
-            <span class="mini-badge badge-chart">차트: {row['차트판정']}</span>
-            <span class="mini-badge badge-pattern">패턴: {row['패턴판정']}</span>
-        </div>
-
-        <div class="section-title">주요 뉴스</div>
-        <div class="reason-box">
-            {news_text}
-        </div>
-
-        <div class="section-title">뉴스 출처</div>
-        <div class="source-box">
-            {row['뉴스출처']}
-        </div>
-
-        <div class="section-title">판단 이유</div>
-        <div class="reason-box">
-            {reason_text}
-        </div>
-
-        <div style="margin-top: 15px; border-top: 1px solid #30363D; padding-top: 10px;">
-            <span style="color: #888; font-size: 0.9rem;">AI 확신도: {row['확신도']}%</span>
-        </div>
+<div style="background-color: #161B22; border-left: 5px solid {accent_color}; padding: 22px; border-radius: 12px; margin-bottom: 22px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+        <span style="font-size: 1.5rem; font-weight: bold; color: white;">
+            {row['종목명']} <small style="color: #888; font-weight: normal;">({row['티커']})</small>
+        </span>
+        <span style="background-color: {accent_color}; color: white; padding: 6px 16px; border-radius: 20px; font-weight: bold; font-size: 0.95rem;">
+            {pred_val}
+        </span>
     </div>
-    """)
+
+    <div style="margin-bottom: 8px;">
+        <span class="mini-badge badge-keyword">키워드: {row['핫키워드']}</span>
+        <span class="mini-badge" style="background-color: {news_color};">뉴스: {row['뉴스판정']}</span>
+        <span class="mini-badge badge-chart">차트: {row['차트판정']}</span>
+        <span class="mini-badge badge-pattern">패턴: {row['패턴판정']}</span>
+    </div>
+
+    <div class="section-title">주요 뉴스</div>
+    <div class="reason-box">
+        {news_text}
+    </div>
+
+    <div class="section-title">뉴스 출처</div>
+    <div class="source-box">
+        {row['뉴스출처']}
+    </div>
+
+    <div class="section-title">판단 이유</div>
+    <div class="reason-box">
+        {reason_text}
+    </div>
+
+    <div style="margin-top: 15px; border-top: 1px solid #30363D; padding-top: 10px;">
+        <span style="color: {conf_color}; font-size: 0.95rem; font-weight: bold;">AI 확신도: {row['확신도']}%</span>
+    </div>
+</div>
+""")
 
                 with st.expander(f"📉 {row['종목명']} 차트 보기"):
                     chart_df = load_stock_chart_data(row["종목명"], row["티커"])
@@ -360,6 +422,6 @@ if df is not None and not df.empty:
                             )
                     else:
                         st.info("차트 데이터를 찾을 수 없습니다.")
-                    
+
 else:
     st.error("🚨 분석 데이터를 찾을 수 없습니다. 경로와 파일명을 확인해 주세요.")
