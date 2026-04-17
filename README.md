@@ -69,14 +69,14 @@ GOOGLE_API_KEY=your_google_api_key_here
 
 ### 2. 전체 파이프라인 실행
 
-```bash
+```powershell
 # 가상환경 활성화 (Windows)
-.\.venv\Scripts\activate
+.\.venv\Scripts\Activate.ps1
 
 # 필수 패키지 설치
 pip install -r requirements.txt
 
-# 전체 파이프라인 실행
+# 데이터 업데이트 → AI 분석 → 성과 평가 → 대시보드 실행
 python run_pipeline.py
 ```
 
@@ -161,7 +161,7 @@ Gemini는 뉴스, 차트, 과거 패턴 정보를 종합해 다음 항목을 생
 - 과거 날짜 기준 백필 분석 결과 생성
 - 거래일 기준 백필 실행 및 주말 자동 스킵
 - Streamlit 기반 대시보드 화면 제공
-- 예측 결과 평가를 위한 `evaluator.py` 구조 준비
+- `evaluator.py`를 통한 예측 결과 평가 및 `logs/total_performance.csv` 생성
 
 현재 단계에서는 직접 학습한 머신러닝 모델이 예측하는 구조가 아니라,  
 Gemini가 뉴스와 차트 데이터를 해석할 수 있도록 데이터 파이프라인과 분석 구조를 설계한 상태입니다.
@@ -187,10 +187,10 @@ Stock_Sentiment_Project/
 │   └── web_app.py               # Streamlit 대시보드
 ├── run_pipeline.py              # 데이터 업데이트 → AI 분석 → 평가 → 대시보드 실행
 ├── logs/
-│   ├── raw_data/                # 종목별 원본 차트 데이터 (.csv)
-│   ├── daily_analysis_report.csv
-│   ├── backfill_analysis_report.csv
-│   └── total_performance.csv
+│   ├── raw_data/                # 종목별 원본 차트 데이터 (.csv, 실행 시 생성)
+│   ├── daily_analysis_report.csv      # 일일 분석 결과 (실행 시 생성)
+│   ├── backfill_analysis_report.csv   # 과거 백필 결과 (실행 시 생성)
+│   └── total_performance.csv          # 통합 성과표 (실행 시 생성)
 ├── .env                         # API 키 보관
 ├── requirements.txt             # 필수 패키지 목록
 └── README.md                    # 프로젝트 설명 문서
@@ -215,12 +215,16 @@ Stock_Sentiment_Project/
 - 차트판정
 - 핵심사유
 
-향후에는 아래 항목을 추가해 평가용 데이터셋으로 확장할 계획입니다.
+`evaluator.py` 실행 후 생성되는 `logs/total_performance.csv`에는 아래 평가 항목이 함께 저장됩니다.
 
+- 데이터구분
+- 기준가
+- 평가일
+- 평가가
 - 실제결과
 - 적중여부
 - 수익률
-- 예측 시점 기준 가격
+- 평가상태
 
 ---
 
