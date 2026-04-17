@@ -1,7 +1,15 @@
 import FinanceDataReader as fdr
 from datetime import datetime, timedelta
 
+"""
+단일 종목의 간단한 최근 추세를 조회하는 보조 모듈.
+
+현재 메인 파이프라인에서는 raw_data CSV를 주로 사용하지만,
+빠르게 현재가/등락률/단기 추세를 확인할 때 사용할 수 있다.
+"""
+
 def get_stock_trend(stock_name):
+    """종목명 또는 티커를 받아 최근 30일 기준 가격 변화와 5일선 추세를 반환한다."""
     try:
         # 1. 한국 종목 리스트 로드 (캐싱을 위해 한번만 불러오는게 좋지만 일단 진행)
         df_krx = fdr.StockListing('KRX')

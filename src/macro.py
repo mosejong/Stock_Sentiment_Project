@@ -1,12 +1,21 @@
 import time
 from old.main_logic import run_stock_analysis
 
+"""
+초기 실험용 매크로 스크립트.
+
+old.main_logic 기반 분석을 여러 종목에 반복 실행하던 파일이며,
+현재 핵심 파이프라인은 run_pipeline.py, main_auto.py, backfill_history.py 쪽이다.
+남겨두는 경우에는 레거시/참고용으로 보는 것이 맞다.
+"""
+
 # 미국 주식은 티커(Ticker)로 적어주는 게 가장 확실해!
 MY_STOCKS = [
     "삼성전자", "NVDA", "TSLA", "AAPL", "GOOGL", 
     "삼진제약", "케이뱅크", "O", "포스코DX", "카카오"
 ]
 def start_macro():
+    """old.main_logic 분석을 종목별로 재시도하면서 실행한다."""
     print(f"🚀 [강력 매크로] 총 {len(MY_STOCKS)}개 종목 분석을 시작합니다.")
     
     for stock in MY_STOCKS:

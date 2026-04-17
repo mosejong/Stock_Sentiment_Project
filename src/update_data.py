@@ -3,6 +3,13 @@ import pandas as pd
 from datetime import datetime, timedelta
 import os
 
+"""
+관심 종목의 최근 5년치 주가 데이터를 수집하고 기술적 지표를 계산하는 스크립트.
+
+저장 위치는 logs/raw_data/이며, main_auto.py와 backfill_history.py가
+이 CSV를 읽어 차트 요약과 실제 결과 평가에 사용한다.
+"""
+
 # 1. 강제 매핑 리스트 (이름: 코드)
 MY_STOCKS = {
     "삼성전자": "005930",
@@ -18,6 +25,7 @@ MY_STOCKS = {
 }
 
 def update_stock_data():
+    """종목별 5년치 OHLCV 데이터, 이동평균선, 다음날 방향(Target)을 저장한다."""
     if not os.path.exists('logs/raw_data'):
         os.makedirs('logs/raw_data')
         print("📁 'logs/raw_data' 폴더 생성 완료!")
@@ -41,7 +49,7 @@ def update_stock_data():
                 print("❌ 데이터 없음")
                 continue
 
-            # 기술적 지표 계산
+            # 분석/평가에 공통으로 쓰는 기술적 지표와 다음 거래일 방향 라벨
             df['MA5'] = df['Close'].rolling(window=5).mean()
             df['MA20'] = df['Close'].rolling(window=20).mean()
             df['MA60'] = df['Close'].rolling(window=60).mean()

@@ -7,3 +7,4 @@ logs/raw_data/*.csv
 .streamlit/
 터미널 실행.txt
 old/
+계획.txt

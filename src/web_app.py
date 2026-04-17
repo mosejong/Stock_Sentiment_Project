@@ -2,6 +2,16 @@ import streamlit as st
 import pandas as pd
 import os
 from datetime import datetime
+import plotly.graph_objects as go
+
+"""
+Streamlit 대시보드.
+
+daily_analysis_report.csv의 최신 날짜 데이터를 읽어 종목별 AI 예측,
+확신도, 뉴스 요약, 판단 근거, 최근 차트를 보여준다.
+분석 생성 로직은 main_auto.py/backfill_history.py에 있고,
+이 파일은 저장된 결과를 사용자가 보기 좋게 표시하는 역할만 담당한다.
+"""
 
 # 1. 페이지 설정
 st.set_page_config(page_title="Gemini Pro Insight", layout="wide", page_icon="💎")
@@ -89,6 +99,7 @@ REPORT_PATH = "logs/daily_analysis_report.csv"
 
 
 def load_stock_chart_data(stock_name: str, ticker: str):
+    """종목명 파일을 우선 찾고, 없으면 티커 파일에서 차트 데이터를 불러온다."""
     possible_paths = [
         f"logs/raw_data/{stock_name}_5year_data.csv",
         f"logs/raw_data/{ticker}_5year_data.csv",
@@ -111,6 +122,7 @@ def load_stock_chart_data(stock_name: str, ticker: str):
 
 
 def load_data():
+    """대시보드에 필요한 분석 CSV를 읽고 컬럼/타입을 표준화한다."""
     expected_columns = [
         "날짜", "종목명", "티커", "AI예측", "확신도",
         "핫키워드", "뉴스판정", "뉴스요약", "뉴스출처",
@@ -157,6 +169,7 @@ def load_data():
 
 
 def get_prediction_color(pred_val: str):
+    """예측 방향에 따라 카드 강조 색상을 반환한다."""
     if "상승" in pred_val:
         return "#FF4B4B"   # 한국 주식 스타일: 상승 빨강
     elif "하락" in pred_val:
@@ -165,6 +178,7 @@ def get_prediction_color(pred_val: str):
 
 
 def get_news_signal_color(signal: str):
+    """뉴스판정 값을 배지 색상으로 변환한다."""
     signal = str(signal).strip()
     if "호재" in signal:
         return "#22C55E"   # 초록
@@ -176,6 +190,7 @@ def get_news_signal_color(signal: str):
 
 
 def get_confidence_color(score):
+    """확신도 구간별 표시 색상을 반환한다."""
     try:
         score = float(score)
     except Exception:
@@ -191,6 +206,7 @@ def get_confidence_color(score):
 
 
 def shorten_text(text: str, limit: int = 20):
+    """표 형태에서 긴 뉴스 요약이 화면을 밀어내지 않도록 줄인다."""
     text = str(text).strip()
     if len(text) > limit:
         return text[:limit] + "..."
@@ -257,6 +273,7 @@ if df is not None and not df.empty:
         pred_filter = ["▲ 상승", "▼ 하락", "━ 관망"]
 
     filtered_df = latest_df.copy()
+    # 사이드바 조건을 최신 리포트에 적용한다.
     filtered_df = filtered_df[filtered_df["AI예측"].isin(pred_filter)]
     filtered_df = filtered_df[filtered_df["확신도"] >= min_conf]
 
@@ -403,18 +420,67 @@ if df is not None and not df.empty:
                     chart_df = load_stock_chart_data(row["종목명"], row["티커"])
 
                     if chart_df is not None and not chart_df.empty:
+                        # raw_data 파일마다 날짜 컬럼 형태가 조금 달라서 여기서 한 번 보정한다.
+                        # 첫 컬럼이 날짜인데 이름이 비어있는 해외주식 데이터 보정
+                        if "Date" not in chart_df.columns:
+                            chart_df = chart_df.rename(columns={chart_df.columns[0]: "Date"})
+
                         required_cols = ["Date", "Close", "MA20", "MA60"]
                         missing_cols = [col for col in required_cols if col not in chart_df.columns]
 
                         if missing_cols:
                             st.warning(f"차트 컬럼 부족: {missing_cols}")
+                            st.write("현재 컬럼:", chart_df.columns.tolist())
                         else:
-                            recent_chart = chart_df.sort_values("Date").tail(120).copy()
-                            chart_view = recent_chart[["Date", "Close", "MA20", "MA60"]].set_index("Date")
+                            chart_df["Date"] = pd.to_datetime(chart_df["Date"], errors="coerce")
+                            chart_df = chart_df.dropna(subset=["Date"])
+                            chart_df = chart_df.sort_values("Date").copy()
 
-                            st.line_chart(chart_view, use_container_width=True)
+                            chart_view = chart_df[["Date", "Close", "MA20", "MA60"]].copy()
 
-                            latest_row = recent_chart.iloc[-1]
+                            fig = go.Figure()
+
+                            fig.add_trace(go.Scatter(
+                                x=chart_view["Date"],
+                                y=chart_view["Close"],
+                                mode="lines",
+                                name="Close"
+                            ))
+
+                            fig.add_trace(go.Scatter(
+                                x=chart_view["Date"],
+                                y=chart_view["MA20"],
+                                mode="lines",
+                                name="MA20"
+                            ))
+
+                            fig.add_trace(go.Scatter(
+                                x=chart_view["Date"],
+                                y=chart_view["MA60"],
+                                mode="lines",
+                                name="MA60"
+                            ))
+
+                            if len(chart_view) >= 60:
+                                start_date = chart_view["Date"].iloc[-60]
+                            else:
+                                start_date = chart_view["Date"].iloc[0]
+
+                            end_date = chart_view["Date"].iloc[-1]
+
+                            fig.update_layout(
+                                xaxis=dict(
+                                    range=[start_date, end_date],
+                                    rangeslider=dict(visible=True)
+                                ),
+                                margin=dict(l=20, r=20, t=30, b=20),
+                                height=400,
+                                legend=dict(orientation="h")
+                            )
+
+                            st.plotly_chart(fig, use_container_width=True)
+
+                            latest_row = chart_df.iloc[-1]
                             st.caption(
                                 f"현재가: {latest_row['Close']:.2f} / "
                                 f"MA20: {latest_row['MA20']:.2f} / "

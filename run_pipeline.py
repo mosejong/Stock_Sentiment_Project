@@ -18,7 +18,7 @@ def run_script(script_path, description):
     return True
 
 def main():
-    print("🤖 주식 형님의 AI 투자 자동화 시스템을 가동합니다. ㅡㅡ+ 🚀")
+    print("AI 주식 분석 파이프라인을 시작합니다.")
     
     # 1단계: 데이터 최신화
     if not run_script("src/update_data.py", "1단계: 주가 데이터 업데이트"):
@@ -33,8 +33,8 @@ def main():
         return
 
     print(f"\n{'-'*50}")
-    print("🎉 모든 분석 작업이 끝났습니다, 형님!")
-    print("🌐 잠시 후 웹 대시보드가 열립니다...")
+    print("모든 분석 작업이 완료되었습니다.")
+    print("잠시 후 Streamlit 대시보드를 실행합니다...")
     print(f"{'-'*50}\n")
     
     time.sleep(2)
