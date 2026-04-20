@@ -2,6 +2,7 @@
 __pycache__/
 .env
 *.pyc
+/*.csv
 logs/*.csv
 logs/raw_data/*.csv
 .streamlit/

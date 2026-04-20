@@ -124,9 +124,13 @@ def load_stock_chart_data(stock_name: str, ticker: str):
 def load_data():
     """대시보드에 필요한 분석 CSV를 읽고 컬럼/타입을 표준화한다."""
     expected_columns = [
-        "날짜", "종목명", "티커", "AI예측", "확신도",
+        "날짜", "종목명", "티커", "기준모델", "AI예측", "확신도",
         "핫키워드", "뉴스판정", "뉴스요약", "뉴스출처",
-        "패턴판정", "차트판정", "핵심사유"
+        "패턴판정", "차트판정", "핵심사유",
+        "비교모델", "비교AI예측", "비교확신도", "비교핫키워드",
+        "비교뉴스판정", "비교뉴스요약", "비교뉴스출처",
+        "비교패턴판정", "비교차트판정", "비교핵심사유",
+        "종합예측", "종합점수", "모델일치도", "뉴스중요도", "종합사유"
     ]
 
     if not os.path.exists(REPORT_PATH):
@@ -154,9 +158,13 @@ def load_data():
         df = df.dropna(subset=["날짜"])
 
         text_cols = [
-            "종목명", "티커", "AI예측", "핫키워드",
+            "종목명", "티커", "기준모델", "AI예측", "핫키워드",
             "뉴스판정", "뉴스요약", "뉴스출처",
-            "패턴판정", "차트판정", "핵심사유"
+            "패턴판정", "차트판정", "핵심사유",
+            "비교모델", "비교AI예측", "비교핫키워드",
+            "비교뉴스판정", "비교뉴스요약", "비교뉴스출처",
+            "비교패턴판정", "비교차트판정", "비교핵심사유",
+            "종합예측", "종합점수", "모델일치도", "뉴스중요도", "종합사유"
         ]
         for col in text_cols:
             df[col] = df[col].fillna("").astype(str)
@@ -311,13 +319,15 @@ if df is not None and not df.empty:
             return styles
 
         display_df = filtered_df[[
-            "종목명", "AI예측", "확신도", "핫키워드", "뉴스요약", "뉴스판정"
+            "종목명", "AI예측", "확신도", "핫키워드", "뉴스요약", "뉴스판정",
+            "비교AI예측", "비교확신도", "종합예측", "종합점수"
         ]].copy()
 
         display_df["주요뉴스"] = display_df["뉴스요약"].apply(lambda x: shorten_text(x, 35))
 
         display_df = display_df[[
-            "종목명", "AI예측", "확신도", "핫키워드", "주요뉴스", "뉴스판정"
+            "종목명", "AI예측", "확신도", "핫키워드", "주요뉴스", "뉴스판정",
+            "비교AI예측", "비교확신도", "종합예측", "종합점수"
         ]]
 
         st.dataframe(
@@ -331,6 +341,10 @@ if df is not None and not df.empty:
                 "핫키워드": st.column_config.TextColumn("핫키워드", width="medium"),
                 "주요뉴스": st.column_config.TextColumn("주요뉴스", width="large"),
                 "뉴스판정": st.column_config.TextColumn("뉴스판정", width="medium"),
+                "비교AI예측": st.column_config.TextColumn("비교AI예측", width="small"),
+                "비교확신도": st.column_config.TextColumn("비교확신도", width="small"),
+                "종합예측": st.column_config.TextColumn("종합예측", width="small"),
+                "종합점수": st.column_config.TextColumn("종합점수", width="small"),
             }
         )
 
@@ -375,6 +389,35 @@ if df is not None and not df.empty:
 
                 reason_text = str(row["핵심사유"]).replace("\\n", "<br>").replace("•", "<br>•")
                 news_text = str(row["뉴스요약"]).replace("\\n", "<br>")
+                compare_model = str(row.get("비교모델", "")).strip()
+                compare_block = ""
+                ensemble_block = ""
+
+                if str(row.get("종합예측", "")).strip():
+                    ensemble_block = f"""
+    <div class="section-title">종합 판단</div>
+    <div class="reason-box">
+        <b>종합예측:</b> {row.get('종합예측', '')} /
+        <b>종합점수:</b> {row.get('종합점수', '')} /
+        <b>모델일치도:</b> {row.get('모델일치도', '')} /
+        <b>뉴스중요도:</b> {row.get('뉴스중요도', '')}<br>
+        {row.get('종합사유', '')}
+    </div>
+"""
+
+                if compare_model:
+                    compare_reason = str(row.get("비교핵심사유", "")).replace("\\n", "<br>").replace("•", "<br>•")
+                    compare_news = str(row.get("비교뉴스요약", "")).replace("\\n", "<br>")
+                    compare_block = f"""
+    <div class="section-title">비교 모델 결과 ({compare_model})</div>
+    <div class="reason-box">
+        <b>예측:</b> {row.get('비교AI예측', '')} /
+        <b>확신도:</b> {row.get('비교확신도', '')}% /
+        <b>뉴스:</b> {row.get('비교뉴스판정', '')}<br>
+        <b>뉴스요약:</b> {compare_news}<br>
+        <b>판단이유:</b> {compare_reason}
+    </div>
+"""
 
                 with st.container():
                     st.html(f"""
@@ -393,6 +436,7 @@ if df is not None and not df.empty:
         <span class="mini-badge" style="background-color: {news_color};">뉴스: {row['뉴스판정']}</span>
         <span class="mini-badge badge-chart">차트: {row['차트판정']}</span>
         <span class="mini-badge badge-pattern">패턴: {row['패턴판정']}</span>
+        <span class="mini-badge" style="background-color: #6366F1;">종합: {row.get('종합예측', '')} {row.get('종합점수', '')}</span>
     </div>
 
     <div class="section-title">주요 뉴스</div>
@@ -409,6 +453,10 @@ if df is not None and not df.empty:
     <div class="reason-box">
         {reason_text}
     </div>
+
+    {compare_block}
+
+    {ensemble_block}
 
     <div style="margin-top: 15px; border-top: 1px solid #30363D; padding-top: 10px;">
         <span style="color: {conf_color}; font-size: 0.95rem; font-weight: bold;">AI 확신도: {row['확신도']}%</span>

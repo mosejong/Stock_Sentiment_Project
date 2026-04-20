@@ -3,6 +3,7 @@ import time
 import json
 import re
 from datetime import datetime
+from pathlib import Path
 import requests
 
 import pandas as pd
@@ -13,7 +14,8 @@ from dotenv import load_dotenv
 # =========================================================
 # 1. 환경 설정
 # =========================================================
-load_dotenv()
+BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env", override=True)
 api_key = os.getenv("GOOGLE_API_KEY")
 
 
@@ -22,7 +24,8 @@ if not api_key:
 
 genai.configure(api_key=api_key)
 
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash")
+COMPARE_MODEL_NAME = os.getenv("GEMINI_COMPARE_MODEL_NAME", "").strip()
 
 # 결과 저장 경로
 REPORT_PATH = "logs/daily_analysis_report.csv"
@@ -74,11 +77,132 @@ def ensure_directory_exists(file_path: str):
         os.makedirs(directory, exist_ok=True)
 
 
-def get_model_with_tools(tool_set=None):
+def get_gemini_api_url(model_name: str) -> str:
+    return f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+
+
+def get_model_with_tools(tool_set=None, model_name: str = MODEL_NAME):
     """도구 유무에 따라 모델 생성"""
     if tool_set is None:
-        return genai.GenerativeModel(model_name=MODEL_NAME)
-    return genai.GenerativeModel(model_name=MODEL_NAME, tools=tool_set)
+        return genai.GenerativeModel(model_name=model_name)
+    return genai.GenerativeModel(model_name=model_name, tools=tool_set)
+
+
+def normalize_report_columns(df: pd.DataFrame, target_columns: list) -> pd.DataFrame:
+    """기존 CSV와 새 비교 컬럼이 섞여도 항상 같은 컬럼 순서로 맞춘다."""
+    for col in target_columns:
+        if col not in df.columns:
+            df[col] = ""
+    return df[target_columns].copy()
+
+
+def prediction_to_direction(prediction: str) -> int:
+    """상승/하락/관망 예측을 계산용 방향 점수로 변환한다."""
+    prediction = str(prediction)
+    if "상승" in prediction or "▲" in prediction:
+        return 1
+    if "하락" in prediction or "▼" in prediction:
+        return -1
+    return 0
+
+
+def news_signal_weight(signal: str) -> int:
+    """뉴스판정의 강도를 방향성 점수로 변환한다."""
+    signal = str(signal)
+    if "호재" in signal:
+        return 1
+    if "악재" in signal:
+        return -1
+    return 0
+
+
+def to_int(value, default: int = 50) -> int:
+    try:
+        return int(float(str(value).replace("%", "").strip()))
+    except Exception:
+        return default
+
+
+def calculate_news_importance(data: dict) -> int:
+    """
+    뉴스 중요도를 0~100으로 계산한다.
+
+    두 모델의 뉴스판정이 같은 방향이면 높게 보고, 실질 호재/악재가 포함되면
+    단순 기대감보다 높은 점수를 준다. 향후에는 이벤트 종류별 가중치로 확장한다.
+    """
+    base_signal = data.get("뉴스판정", "")
+    compare_signal = data.get("비교뉴스판정", "")
+    base_weight = news_signal_weight(base_signal)
+    compare_weight = news_signal_weight(compare_signal)
+
+    score = 45
+    if base_weight != 0:
+        score += 20
+    if compare_weight != 0:
+        score += 20
+    if base_weight != 0 and base_weight == compare_weight:
+        score += 15
+    elif base_weight != 0 and compare_weight != 0 and base_weight != compare_weight:
+        score -= 15
+
+    return max(0, min(100, score))
+
+
+def add_ensemble_result(data: dict) -> dict:
+    """
+    기준 모델과 비교 모델 결과를 합쳐 최종 종합예측/종합점수를 만든다.
+
+    계산 방식:
+    - 각 모델의 예측 방향(상승=1, 하락=-1, 관망=0)에 확신도를 곱한다.
+    - 두 모델이 같은 방향이면 일치도 보너스를 준다.
+    - 뉴스판정이 같은 방향이면 뉴스 중요도 점수를 높인다.
+    """
+    base_pred = data.get("AI예측", "━ 관망")
+    compare_pred = data.get("비교AI예측", "")
+    base_conf = to_int(data.get("확신도", 50))
+    compare_conf = to_int(data.get("비교확신도", 0), default=0)
+
+    base_dir = prediction_to_direction(base_pred)
+    compare_dir = prediction_to_direction(compare_pred)
+
+    has_compare = bool(str(data.get("비교모델", "")).strip())
+    if has_compare:
+        model_agreement = 100 if base_dir == compare_dir else 50 if 0 in [base_dir, compare_dir] else 0
+        weighted_direction = (base_dir * base_conf * 0.5) + (compare_dir * compare_conf * 0.5)
+        avg_conf = (base_conf + compare_conf) / 2
+    else:
+        model_agreement = 100
+        weighted_direction = base_dir * base_conf
+        avg_conf = base_conf
+
+    news_importance = calculate_news_importance(data)
+
+    if weighted_direction >= 25:
+        ensemble_prediction = "▲ 상승"
+    elif weighted_direction <= -25:
+        ensemble_prediction = "▼ 하락"
+    else:
+        ensemble_prediction = "━ 관망"
+
+    ensemble_score = round((avg_conf * 0.65) + (model_agreement * 0.2) + (news_importance * 0.15))
+
+    if has_compare and model_agreement == 100:
+        reason = "두 모델의 방향성이 일치하여 종합 신뢰도를 높게 반영함"
+    elif has_compare and model_agreement == 0:
+        reason = "두 모델의 방향성이 충돌하여 종합 판단을 보수적으로 반영함"
+    elif has_compare:
+        reason = "한 모델이 관망 또는 약한 신호를 제시하여 중간 수준으로 반영함"
+    else:
+        reason = "비교 모델 없이 기준 모델 결과를 중심으로 반영함"
+
+    data.update({
+        "종합예측": ensemble_prediction,
+        "종합점수": str(int(ensemble_score)),
+        "모델일치도": str(int(model_agreement)),
+        "뉴스중요도": str(int(news_importance)),
+        "종합사유": reason,
+    })
+    return data
 
 
 # =========================================================
@@ -229,7 +353,7 @@ def get_historical_context(stock_name: str) -> str:
 # =========================================================
 # 5. 뉴스 수집 / 뉴스 요약
 # =========================================================
-def get_news_context(stock_name: str) -> dict:
+def get_news_context(stock_name: str, model_name: str = MODEL_NAME) -> dict:
     """
     REST 방식으로 Google Search grounding을 사용해 최신 뉴스 수집
     터미널 로그 최소화 버전
@@ -242,8 +366,6 @@ def get_news_context(stock_name: str) -> dict:
             "news_summary": "GOOGLE_API_KEY가 없어 뉴스 수집 불가",
             "news_sources": "출처 없음"
         }
-
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
     prompt = f"""
 너는 종목 관련 최신 뉴스를 짧고 사실적으로 요약하는 뉴스 분석기다.
@@ -289,7 +411,7 @@ def get_news_context(stock_name: str) -> dict:
     }
 
     try:
-        res = requests.post(url, headers=headers, data=json.dumps(payload), timeout=30)
+        res = requests.post(get_gemini_api_url(model_name), headers=headers, data=json.dumps(payload), timeout=30)
         res.raise_for_status()
         data = res.json()
 
@@ -333,17 +455,17 @@ def get_news_context(stock_name: str) -> dict:
 # =========================================================
 # 6. 최종 AI 분석
 # =========================================================
-def get_ai_analysis(stock_name: str):
+def get_ai_analysis(stock_name: str, model_name: str = MODEL_NAME):
     chart_info = get_stock_data_summary(stock_name)
     historical_context = get_historical_context(stock_name)
-    news_data = get_news_context(stock_name)
+    news_data = get_news_context(stock_name, model_name=model_name)
 
     news_keyword = news_data.get("keyword", "뉴스수집실패")
     news_signal = news_data.get("news_signal", "단순 기대감")
     news_summary = news_data.get("news_summary", "관련 뉴스 요약 없음")
     news_sources = news_data.get("news_sources", "출처 없음")
 
-    model = get_model_with_tools(None)
+    model = get_model_with_tools(None, model_name=model_name)
 
     prompt = f"""
 너는 과거 패턴, 뉴스 재료, 기술적 지표를 함께 해석하는 냉정한 단기 주식 애널리스트다.
@@ -413,6 +535,7 @@ confidence 기준:
 
         if parsed and isinstance(parsed, dict):
             # 뉴스 수집 결과를 같이 붙여서 반환
+            parsed["model_name"] = model_name
             parsed["news_summary"] = news_summary
             parsed["collected_news_keyword"] = news_keyword
             parsed["news_sources"] = news_sources
@@ -432,19 +555,31 @@ confidence 기준:
 # =========================================================
 def run_auto_analysis():
     print(f"🚀 {today_date} 전 종목 자동 분석 시작")
+    print(f"[MODEL] base={MODEL_NAME}")
+    print(f"[MODEL] compare={COMPARE_MODEL_NAME or '(disabled)'}")
+    if COMPARE_MODEL_NAME and COMPARE_MODEL_NAME != MODEL_NAME:
+        print(f"[MODEL] compare mode ON: {MODEL_NAME} vs {COMPARE_MODEL_NAME}")
+    else:
+        print("[MODEL] compare mode OFF")
     ensure_directory_exists(REPORT_PATH)
 
     results = []
 
     for stock in MY_STOCKS.keys():
         print(f"🔍 {stock} 분석 중...")
-        analysis = get_ai_analysis(stock)
+        analysis = get_ai_analysis(stock, model_name=MODEL_NAME)
+
+        compare_analysis = None
+        if COMPARE_MODEL_NAME and COMPARE_MODEL_NAME != MODEL_NAME:
+            print(f"   -> compare model running... ({COMPARE_MODEL_NAME})")
+            compare_analysis = get_ai_analysis(stock, model_name=COMPARE_MODEL_NAME)
 
         if analysis:
             data = {
                 "날짜": today_date,
                 "종목명": stock,
                 "티커": MY_STOCKS[stock],
+                "기준모델": analysis.get("model_name", MODEL_NAME),
                 "AI예측": analysis.get("prediction", "━ 관망"),
                 "확신도": str(analysis.get("confidence", "50")).replace("%", ""),
                 "핫키워드": analysis.get("keyword", "#미분류"),
@@ -460,6 +595,7 @@ def run_auto_analysis():
                 "날짜": today_date,
                 "종목명": stock,
                 "티커": MY_STOCKS[stock],
+                "기준모델": MODEL_NAME,
                 "AI예측": "━ 관망",
                 "확신도": "0",
                 "핫키워드": "분석실패",
@@ -471,6 +607,34 @@ def run_auto_analysis():
                 "핵심사유": "서버 응답 오류",
             }
 
+        if compare_analysis:
+            data.update({
+                "비교모델": compare_analysis.get("model_name", COMPARE_MODEL_NAME),
+                "비교AI예측": compare_analysis.get("prediction", "━ 관망"),
+                "비교확신도": str(compare_analysis.get("confidence", "50")).replace("%", ""),
+                "비교핫키워드": compare_analysis.get("keyword", "#미분류"),
+                "비교뉴스판정": compare_analysis.get("news_signal", "단순 기대감"),
+                "비교뉴스요약": compare_analysis.get("news_summary", "뉴스 요약 없음"),
+                "비교뉴스출처": compare_analysis.get("news_sources", "출처 없음"),
+                "비교패턴판정": compare_analysis.get("pattern_match", "유사패턴 혼조"),
+                "비교차트판정": compare_analysis.get("chart_score", "혼조"),
+                "비교핵심사유": compare_analysis.get("final_reason", "내용 없음"),
+            })
+        else:
+            data.update({
+                "비교모델": "",
+                "비교AI예측": "",
+                "비교확신도": "",
+                "비교핫키워드": "",
+                "비교뉴스판정": "",
+                "비교뉴스요약": "",
+                "비교뉴스출처": "",
+                "비교패턴판정": "",
+                "비교차트판정": "",
+                "비교핵심사유": "",
+            })
+
+        data = add_ensemble_result(data)
         results.append(data)
         time.sleep(2)
 
@@ -480,6 +644,7 @@ def run_auto_analysis():
         "날짜",
         "종목명",
         "티커",
+        "기준모델",
         "AI예측",
         "확신도",
         "핫키워드",
@@ -489,13 +654,32 @@ def run_auto_analysis():
         "패턴판정",
         "차트판정",
         "핵심사유",
+        "비교모델",
+        "비교AI예측",
+        "비교확신도",
+        "비교핫키워드",
+        "비교뉴스판정",
+        "비교뉴스요약",
+        "비교뉴스출처",
+        "비교패턴판정",
+        "비교차트판정",
+        "비교핵심사유",
+        "종합예측",
+        "종합점수",
+        "모델일치도",
+        "뉴스중요도",
+        "종합사유",
     ]
-    df = df[target_columns]
+    df = normalize_report_columns(df, target_columns)
 
     if (not os.path.exists(REPORT_PATH)) or os.path.getsize(REPORT_PATH) == 0:
         df.to_csv(REPORT_PATH, index=False, encoding="utf-8-sig")
     else:
-        df.to_csv(REPORT_PATH, mode="a", header=False, index=False, encoding="utf-8-sig")
+        old_df = pd.read_csv(REPORT_PATH, encoding="utf-8-sig")
+        old_df = normalize_report_columns(old_df, target_columns)
+        combined_df = pd.concat([old_df, df], ignore_index=True)
+        combined_df.drop_duplicates(subset=["날짜", "종목명"], keep="last", inplace=True)
+        combined_df.to_csv(REPORT_PATH, index=False, encoding="utf-8-sig")
 
     print(f"✅ 분석 완료! [ {REPORT_PATH} ] 파일을 확인하십시오.")
     print(df)

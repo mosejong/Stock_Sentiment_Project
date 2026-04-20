@@ -3,6 +3,7 @@ import time
 import json
 import re
 from datetime import datetime, timedelta
+from pathlib import Path
 import requests
 
 import pandas as pd
@@ -21,7 +22,8 @@ from dotenv import load_dotenv
 # =========================================================
 # 1. 환경 설정
 # =========================================================
-load_dotenv()
+BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env", override=True)
 api_key = os.getenv("GOOGLE_API_KEY")
 
 if not api_key:
@@ -29,7 +31,8 @@ if not api_key:
 
 genai.configure(api_key=api_key)
 
-MODEL_NAME = "gemini-2.5-flash"
+MODEL_NAME = os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash")
+GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent"
 
 # 과거데이터 전용 저장 경로
 REPORT_PATH = "logs/backfill_analysis_report.csv"
@@ -341,8 +344,6 @@ def get_news_context(stock_name: str, analysis_date: str) -> dict:
             "news_failed": True,
         }
 
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
-
     prompt = f"""
 너는 종목 관련 뉴스를 짧고 사실적으로 요약하는 뉴스 분석기다.
 
@@ -391,7 +392,7 @@ def get_news_context(stock_name: str, analysis_date: str) -> dict:
 
     for attempt in range(1, max_retries + 1):
         try:
-            res = requests.post(url, headers=headers, data=json.dumps(payload), timeout=30)
+            res = requests.post(GEMINI_API_URL, headers=headers, data=json.dumps(payload), timeout=30)
             res.raise_for_status()
             data = res.json()
 
