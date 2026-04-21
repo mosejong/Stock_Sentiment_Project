@@ -4,11 +4,12 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
-import requests
 
+import requests
 import pandas as pd
 import google.generativeai as genai
 from dotenv import load_dotenv
+from stock_filter import describe_stock_filter, filter_stocks
 
 
 # =========================================================
@@ -17,7 +18,6 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env", override=True)
 api_key = os.getenv("GOOGLE_API_KEY")
-
 
 if not api_key:
     raise ValueError("❌ GOOGLE_API_KEY가 .env 파일에 없습니다.")
@@ -32,7 +32,6 @@ REPORT_PATH = "logs/daily_analysis_report.csv"
 RAW_DATA_DIR = "logs/raw_data"
 
 # 과거 누적 리포트(있으면 활용)
-# - 기존 예측/실제결과/적중여부가 쌓인 파일
 HISTORY_REPORT_PATH = "logs/daily_analysis_report.csv"
 
 today_date = datetime.now().strftime("%Y-%m-%d")
@@ -48,8 +47,10 @@ MY_STOCKS = {
     "케이뱅크": "272210",
     "리얼티인컴": "O",
     "포스코DX": "022100",
-    "카카오": "035720"
+    "카카오": "035720",
 }
+
+ACTIVE_STOCKS = filter_stocks(MY_STOCKS)
 
 
 # =========================================================
@@ -123,12 +124,209 @@ def to_int(value, default: int = 50) -> int:
         return default
 
 
+def is_invalid_news(text: str | None) -> bool:
+    """UI에 보여주면 안 되는 실패/빈 뉴스인지 판별"""
+    if text is None:
+        return True
+
+    text = str(text).strip()
+    if not text:
+        return True
+
+    bad_patterns = [
+        "REST 방식 뉴스 수집 실패",
+        "뉴스 수집 실패",
+        "GOOGLE_API_KEY가 없어 뉴스 수집 불가",
+        "응답은 받았지만 JSON 파싱 실패",
+        "관련 뉴스 요약 없음",
+        "뉴스 요약 없음",
+    ]
+    return any(pattern in text for pattern in bad_patterns)
+
+
+def normalize_source_text(source_text: str | None) -> str:
+    if source_text is None:
+        return ""
+    source_text = str(source_text).strip()
+    if source_text == "출처 없음":
+        return ""
+    return source_text
+
+
+def score_news_candidate(news_text: str, news_signal: str = "", news_sources: str = "", keyword: str = "") -> int:
+    """
+    뉴스 후보 품질 점수 계산
+    - 실패 뉴스는 탈락
+    - 실질 호재/악재, 출처 존재, 키워드 존재, 본문 구체성에 가점
+    """
+    if is_invalid_news(news_text):
+        return -100
+
+    score = 20
+
+    news_signal = str(news_signal).strip()
+    news_sources = normalize_source_text(news_sources)
+    keyword = str(keyword).strip()
+
+    if "실질 호재" in news_signal or "실질 악재" in news_signal:
+        score += 30
+    elif "단순 기대감" in news_signal:
+        score += 10
+
+    if news_sources:
+        score += 15
+        if "," in news_sources:
+            score += 5
+
+    if keyword and keyword not in ["뉴스수집실패", "분석실패", "#미분류"]:
+        score += 10
+
+    text_len = len(str(news_text).strip())
+    if text_len >= 40:
+        score += 10
+    if text_len >= 80:
+        score += 5
+
+    vague_words = ["기대", "전망", "가능성", "관측"]
+    if any(word in str(news_text) for word in vague_words):
+        score -= 5
+
+    return max(0, min(100, score))
+
+
+def detect_prediction_conflict(data: dict) -> bool:
+    """
+    두 모델이 상승/하락으로 정면 충돌하는지 확인
+    """
+    base_pred = str(data.get("AI예측", "")).strip()
+    compare_pred = str(data.get("비교AI예측", "")).strip()
+
+    if not compare_pred:
+        return False
+
+    return (
+        base_pred in ["▲ 상승", "▼ 하락"]
+        and compare_pred in ["▲ 상승", "▼ 하락"]
+        and base_pred != compare_pred
+    )
+
+
+def signal_to_label(signal: str, default_label: str = "재료") -> str:
+    signal = str(signal).strip()
+    if "호재" in signal:
+        return "호재"
+    if "악재" in signal:
+        return "악재"
+    if "기대감" in signal:
+        return "기대감"
+    return default_label
+
+
+def clean_keyword_for_conflict(keyword: str, fallback: str) -> str:
+    keyword = str(keyword).strip()
+    if not keyword or keyword in ["뉴스수집실패", "분석실패", "#미분류"]:
+        return fallback
+    return keyword
+
+
+def build_conflict_news_summary(data: dict) -> dict:
+    """
+    뉴스/모델 방향이 강하게 충돌할 때 메인 화면용 요약 생성
+    """
+    base_kw = clean_keyword_for_conflict(data.get("핫키워드", ""), "기준 재료")
+    compare_kw = clean_keyword_for_conflict(data.get("비교핫키워드", ""), "비교 재료")
+
+    base_signal = signal_to_label(data.get("뉴스판정", ""), "재료")
+    compare_signal = signal_to_label(data.get("비교뉴스판정", ""), "재료")
+
+    return {
+        "대표뉴스키워드": "의견 충돌",
+        "대표뉴스요약": f"{base_kw} 관련 {base_signal}와 {compare_kw} 관련 {compare_signal}가 함께 존재해 단기 방향성 확인이 필요합니다.",
+        "대표뉴스판정": "혼재",
+        "대표뉴스모델": "conflict",
+        "대표뉴스점수": "0",
+    }
+
+
+def pick_featured_news(data: dict) -> dict:
+    """
+    기준 모델 뉴스와 비교 모델 뉴스 중 메인 화면에 보여줄 대표 뉴스 선택
+    """
+    if detect_prediction_conflict(data):
+        return build_conflict_news_summary(data)
+
+    candidates = []
+
+    # 기준 모델 뉴스 후보
+    base_news = data.get("뉴스요약", "")
+    base_signal = data.get("뉴스판정", "")
+    base_sources = data.get("뉴스출처", "")
+    base_keyword = data.get("핫키워드", "")
+
+    base_score = score_news_candidate(
+        news_text=base_news,
+        news_signal=base_signal,
+        news_sources=base_sources,
+        keyword=base_keyword,
+    )
+    if base_score >= 0:
+        candidates.append({
+            "model": data.get("기준모델", "base"),
+            "keyword": base_keyword,
+            "summary": base_news,
+            "signal": base_signal,
+            "score": base_score,
+        })
+
+    # 비교 모델 뉴스 후보
+    compare_news = data.get("비교뉴스요약", "")
+    compare_signal = data.get("비교뉴스판정", "")
+    compare_sources = data.get("비교뉴스출처", "")
+    compare_keyword = data.get("비교핫키워드", "")
+
+    compare_score = score_news_candidate(
+        news_text=compare_news,
+        news_signal=compare_signal,
+        news_sources=compare_sources,
+        keyword=compare_keyword,
+    )
+    if compare_score >= 0:
+        candidates.append({
+            "model": data.get("비교모델", "compare"),
+            "keyword": compare_keyword,
+            "summary": compare_news,
+            "signal": compare_signal,
+            "score": compare_score,
+        })
+
+    if not candidates:
+        return {
+            "대표뉴스키워드": "뉴스 부족",
+            "대표뉴스요약": "관련 뉴스 부족",
+            "대표뉴스판정": "뉴스 부족",
+            "대표뉴스모델": "",
+            "대표뉴스점수": "0",
+        }
+
+    candidates.sort(key=lambda x: x["score"], reverse=True)
+    best = candidates[0]
+
+    keyword = str(best["keyword"]).strip()
+    if not keyword or keyword in ["뉴스수집실패", "분석실패", "#미분류"]:
+        keyword = "대표 뉴스"
+
+    return {
+        "대표뉴스키워드": keyword,
+        "대표뉴스요약": best["summary"],
+        "대표뉴스판정": best["signal"] if best["signal"] else "뉴스 반영",
+        "대표뉴스모델": best["model"],
+        "대표뉴스점수": str(best["score"]),
+    }
+
+
 def calculate_news_importance(data: dict) -> int:
     """
     뉴스 중요도를 0~100으로 계산한다.
-
-    두 모델의 뉴스판정이 같은 방향이면 높게 보고, 실질 호재/악재가 포함되면
-    단순 기대감보다 높은 점수를 준다. 향후에는 이벤트 종류별 가중치로 확장한다.
     """
     base_signal = data.get("뉴스판정", "")
     compare_signal = data.get("비교뉴스판정", "")
@@ -151,11 +349,6 @@ def calculate_news_importance(data: dict) -> int:
 def add_ensemble_result(data: dict) -> dict:
     """
     기준 모델과 비교 모델 결과를 합쳐 최종 종합예측/종합점수를 만든다.
-
-    계산 방식:
-    - 각 모델의 예측 방향(상승=1, 하락=-1, 관망=0)에 확신도를 곱한다.
-    - 두 모델이 같은 방향이면 일치도 보너스를 준다.
-    - 뉴스판정이 같은 방향이면 뉴스 중요도 점수를 높인다.
     """
     base_pred = data.get("AI예측", "━ 관망")
     compare_pred = data.get("비교AI예측", "")
@@ -211,7 +404,6 @@ def add_ensemble_result(data: dict) -> dict:
 def get_stock_data_summary(stock_name: str) -> str:
     ticker = MY_STOCKS.get(stock_name, stock_name)
 
-    # 한글 종목명 파일 우선, 없으면 티커 파일
     possible_paths = [
         os.path.join(RAW_DATA_DIR, f"{stock_name}_5year_data.csv"),
         os.path.join(RAW_DATA_DIR, f"{ticker}_5year_data.csv"),
@@ -292,13 +484,11 @@ def get_historical_context(stock_name: str) -> str:
         if stock_df.empty:
             return "해당 종목의 과거 예측 이력 없음"
 
-        # 날짜 정렬
         if "날짜" in stock_df.columns:
             stock_df["날짜"] = pd.to_datetime(stock_df["날짜"], errors="coerce")
             stock_df = stock_df.sort_values("날짜")
 
         recent_df = stock_df.tail(20).copy()
-
         total_count = len(recent_df)
 
         prediction_counts = (
@@ -310,7 +500,6 @@ def get_historical_context(stock_name: str) -> str:
         down_count = prediction_counts.get("▼ 하락", 0)
         wait_count = prediction_counts.get("━ 관망", 0)
 
-        # 적중률 계산
         hit_rate_text = "적중 데이터 부족"
         if "적중여부" in recent_df.columns:
             valid_hit_df = recent_df[recent_df["적중여부"].isin(["O", "X"])]
@@ -318,7 +507,6 @@ def get_historical_context(stock_name: str) -> str:
                 hit_rate = (valid_hit_df["적중여부"] == "O").mean() * 100
                 hit_rate_text = f"최근 검증 가능 {len(valid_hit_df)}건 기준 적중률 {hit_rate:.1f}%"
 
-        # 최근 키워드
         keyword_text = "키워드 정보 부족"
         if "핫키워드" in recent_df.columns:
             keywords = recent_df["핫키워드"].dropna().astype(str)
@@ -327,7 +515,6 @@ def get_historical_context(stock_name: str) -> str:
                 top_keywords = pd.Series(keywords).value_counts().head(3).index.tolist()
                 keyword_text = ", ".join(top_keywords)
 
-        # 최근 패턴 성향
         dominant_prediction = "혼조"
         max_count = max(up_count, down_count, wait_count)
         if max_count > 0:
@@ -356,15 +543,17 @@ def get_historical_context(stock_name: str) -> str:
 def get_news_context(stock_name: str, model_name: str = MODEL_NAME) -> dict:
     """
     REST 방식으로 Google Search grounding을 사용해 최신 뉴스 수집
-    터미널 로그 최소화 버전
+    실패해도 UI용 본문에는 실패 문구를 넣지 않는다.
     """
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         return {
-            "keyword": "뉴스수집실패",
-            "news_signal": "단순 기대감",
-            "news_summary": "GOOGLE_API_KEY가 없어 뉴스 수집 불가",
-            "news_sources": "출처 없음"
+            "keyword": "",
+            "news_signal": "",
+            "news_summary": "",
+            "news_sources": "",
+            "news_ok": False,
+            "news_error": "GOOGLE_API_KEY가 없어 뉴스 수집 불가",
         }
 
     prompt = f"""
@@ -411,7 +600,12 @@ def get_news_context(stock_name: str, model_name: str = MODEL_NAME) -> dict:
     }
 
     try:
-        res = requests.post(get_gemini_api_url(model_name), headers=headers, data=json.dumps(payload), timeout=30)
+        res = requests.post(
+            get_gemini_api_url(model_name),
+            headers=headers,
+            data=json.dumps(payload),
+            timeout=30
+        )
         res.raise_for_status()
         data = res.json()
 
@@ -427,31 +621,38 @@ def get_news_context(stock_name: str, model_name: str = MODEL_NAME) -> dict:
             if title and title not in source_titles:
                 source_titles.append(title)
 
-        news_sources = ", ".join(source_titles[:3]) if source_titles else "출처 없음"
+        news_sources = ", ".join(source_titles[:3]) if source_titles else ""
 
         if parsed and isinstance(parsed, dict):
             return {
-                "keyword": parsed.get("keyword", "뉴스수집실패"),
-                "news_signal": parsed.get("news_signal", "단순 기대감"),
-                "news_summary": parsed.get("news_summary", "관련 뉴스 요약 없음"),
-                "news_sources": news_sources
+                "keyword": parsed.get("keyword", ""),
+                "news_signal": parsed.get("news_signal", ""),
+                "news_summary": parsed.get("news_summary", ""),
+                "news_sources": news_sources,
+                "news_ok": True,
+                "news_error": "",
             }
 
         return {
-            "keyword": "뉴스수집실패",
-            "news_signal": "단순 기대감",
-            "news_summary": "응답은 받았지만 JSON 파싱 실패",
-            "news_sources": news_sources
+            "keyword": "",
+            "news_signal": "",
+            "news_summary": "",
+            "news_sources": news_sources,
+            "news_ok": False,
+            "news_error": "응답은 받았지만 JSON 파싱 실패",
         }
 
     except Exception:
         return {
-            "keyword": "뉴스수집실패",
-            "news_signal": "단순 기대감",
-            "news_summary": "REST 방식 뉴스 수집 실패",
-            "news_sources": "출처 없음"
+            "keyword": "",
+            "news_signal": "",
+            "news_summary": "",
+            "news_sources": "",
+            "news_ok": False,
+            "news_error": "REST 방식 뉴스 수집 실패",
         }
-        
+
+
 # =========================================================
 # 6. 최종 AI 분석
 # =========================================================
@@ -460,10 +661,12 @@ def get_ai_analysis(stock_name: str, model_name: str = MODEL_NAME):
     historical_context = get_historical_context(stock_name)
     news_data = get_news_context(stock_name, model_name=model_name)
 
-    news_keyword = news_data.get("keyword", "뉴스수집실패")
-    news_signal = news_data.get("news_signal", "단순 기대감")
-    news_summary = news_data.get("news_summary", "관련 뉴스 요약 없음")
-    news_sources = news_data.get("news_sources", "출처 없음")
+    news_keyword = news_data.get("keyword", "")
+    news_signal = news_data.get("news_signal", "")
+    news_summary = news_data.get("news_summary", "")
+    news_sources = news_data.get("news_sources", "")
+    news_ok = news_data.get("news_ok", False)
+    news_error = news_data.get("news_error", "")
 
     model = get_model_with_tools(None, model_name=model_name)
 
@@ -480,9 +683,9 @@ def get_ai_analysis(stock_name: str, model_name: str = MODEL_NAME):
 {historical_context}
 
 [오늘/최근 뉴스 요약]
-핵심키워드: {news_keyword}
-뉴스판정: {news_signal}
-뉴스요약: {news_summary}
+핵심키워드: {news_keyword if news_keyword else "없음"}
+뉴스판정: {news_signal if news_signal else "없음"}
+뉴스요약: {news_summary if news_summary else "관련 뉴스 부족"}
 
 임무:
 과거 유사 패턴 + 오늘 뉴스 + 현재 차트 상태를 종합하여
@@ -534,11 +737,12 @@ confidence 기준:
         parsed = safe_json_loads(response.text)
 
         if parsed and isinstance(parsed, dict):
-            # 뉴스 수집 결과를 같이 붙여서 반환
             parsed["model_name"] = model_name
             parsed["news_summary"] = news_summary
             parsed["collected_news_keyword"] = news_keyword
             parsed["news_sources"] = news_sources
+            parsed["news_ok"] = news_ok
+            parsed["news_error"] = news_error
             return parsed
 
         print(f"⚠️ {stock_name} JSON 파싱 실패")
@@ -555,17 +759,21 @@ confidence 기준:
 # =========================================================
 def run_auto_analysis():
     print(f"🚀 {today_date} 전 종목 자동 분석 시작")
+    if not ACTIVE_STOCKS:
+        raise ValueError("STOCK_INCLUDE/STOCK_EXCLUDE 설정 후 실행할 종목이 없습니다.")
+    print(f"[STOCKS] {describe_stock_filter(len(MY_STOCKS), len(ACTIVE_STOCKS))}")
     print(f"[MODEL] base={MODEL_NAME}")
     print(f"[MODEL] compare={COMPARE_MODEL_NAME or '(disabled)'}")
     if COMPARE_MODEL_NAME and COMPARE_MODEL_NAME != MODEL_NAME:
         print(f"[MODEL] compare mode ON: {MODEL_NAME} vs {COMPARE_MODEL_NAME}")
     else:
         print("[MODEL] compare mode OFF")
+
     ensure_directory_exists(REPORT_PATH)
 
     results = []
 
-    for stock in MY_STOCKS.keys():
+    for stock in ACTIVE_STOCKS.keys():
         print(f"🔍 {stock} 분석 중...")
         analysis = get_ai_analysis(stock, model_name=MODEL_NAME)
 
@@ -578,33 +786,37 @@ def run_auto_analysis():
             data = {
                 "날짜": today_date,
                 "종목명": stock,
-                "티커": MY_STOCKS[stock],
+                "티커": ACTIVE_STOCKS[stock],
                 "기준모델": analysis.get("model_name", MODEL_NAME),
                 "AI예측": analysis.get("prediction", "━ 관망"),
                 "확신도": str(analysis.get("confidence", "50")).replace("%", ""),
                 "핫키워드": analysis.get("keyword", "#미분류"),
                 "뉴스판정": analysis.get("news_signal", "단순 기대감"),
-                "뉴스요약": analysis.get("news_summary", "뉴스 요약 없음"),
-                "뉴스출처": analysis.get("news_sources", "출처 없음"),
+                "뉴스요약": analysis.get("news_summary", ""),
+                "뉴스출처": analysis.get("news_sources", ""),
                 "패턴판정": analysis.get("pattern_match", "유사패턴 혼조"),
                 "차트판정": analysis.get("chart_score", "혼조"),
                 "핵심사유": analysis.get("final_reason", "내용 없음"),
+                "뉴스수집성공": "Y" if analysis.get("news_ok", False) else "N",
+                "뉴스수집오류": analysis.get("news_error", ""),
             }
         else:
             data = {
                 "날짜": today_date,
                 "종목명": stock,
-                "티커": MY_STOCKS[stock],
+                "티커": ACTIVE_STOCKS[stock],
                 "기준모델": MODEL_NAME,
                 "AI예측": "━ 관망",
                 "확신도": "0",
                 "핫키워드": "분석실패",
-                "뉴스판정": "단순 기대감",
-                "뉴스요약": "뉴스 요약 없음",
-                "뉴스출처": "출처 없음",
+                "뉴스판정": "",
+                "뉴스요약": "",
+                "뉴스출처": "",
                 "패턴판정": "유사패턴 혼조",
                 "차트판정": "혼조",
                 "핵심사유": "서버 응답 오류",
+                "뉴스수집성공": "N",
+                "뉴스수집오류": "최종 분석 실패",
             }
 
         if compare_analysis:
@@ -613,12 +825,14 @@ def run_auto_analysis():
                 "비교AI예측": compare_analysis.get("prediction", "━ 관망"),
                 "비교확신도": str(compare_analysis.get("confidence", "50")).replace("%", ""),
                 "비교핫키워드": compare_analysis.get("keyword", "#미분류"),
-                "비교뉴스판정": compare_analysis.get("news_signal", "단순 기대감"),
-                "비교뉴스요약": compare_analysis.get("news_summary", "뉴스 요약 없음"),
-                "비교뉴스출처": compare_analysis.get("news_sources", "출처 없음"),
+                "비교뉴스판정": compare_analysis.get("news_signal", ""),
+                "비교뉴스요약": compare_analysis.get("news_summary", ""),
+                "비교뉴스출처": compare_analysis.get("news_sources", ""),
                 "비교패턴판정": compare_analysis.get("pattern_match", "유사패턴 혼조"),
                 "비교차트판정": compare_analysis.get("chart_score", "혼조"),
                 "비교핵심사유": compare_analysis.get("final_reason", "내용 없음"),
+                "비교뉴스수집성공": "Y" if compare_analysis.get("news_ok", False) else "N",
+                "비교뉴스수집오류": compare_analysis.get("news_error", ""),
             })
         else:
             data.update({
@@ -632,9 +846,13 @@ def run_auto_analysis():
                 "비교패턴판정": "",
                 "비교차트판정": "",
                 "비교핵심사유": "",
+                "비교뉴스수집성공": "",
+                "비교뉴스수집오류": "",
             })
 
         data = add_ensemble_result(data)
+        data.update(pick_featured_news(data))
+
         results.append(data)
         time.sleep(2)
 
@@ -654,6 +872,8 @@ def run_auto_analysis():
         "패턴판정",
         "차트판정",
         "핵심사유",
+        "뉴스수집성공",
+        "뉴스수집오류",
         "비교모델",
         "비교AI예측",
         "비교확신도",
@@ -664,8 +884,15 @@ def run_auto_analysis():
         "비교패턴판정",
         "비교차트판정",
         "비교핵심사유",
+        "비교뉴스수집성공",
+        "비교뉴스수집오류",
         "종합예측",
         "종합점수",
+        "대표뉴스키워드",
+        "대표뉴스요약",
+        "대표뉴스판정",
+        "대표뉴스모델",
+        "대표뉴스점수",
         "모델일치도",
         "뉴스중요도",
         "종합사유",
@@ -682,7 +909,14 @@ def run_auto_analysis():
         combined_df.to_csv(REPORT_PATH, index=False, encoding="utf-8-sig")
 
     print(f"✅ 분석 완료! [ {REPORT_PATH} ] 파일을 확인하십시오.")
-    print(df)
+    print(df[[
+        "종목명",
+        "종합예측",
+        "종합점수",
+        "대표뉴스키워드",
+        "대표뉴스판정",
+        "대표뉴스요약",
+    ]])
 
 
 # =========================================================

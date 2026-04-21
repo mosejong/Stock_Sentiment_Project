@@ -2,6 +2,7 @@ import FinanceDataReader as fdr
 import pandas as pd
 from datetime import datetime, timedelta
 import os
+from stock_filter import describe_stock_filter, filter_stocks
 
 """
 관심 종목의 최근 5년치 주가 데이터를 수집하고 기술적 지표를 계산하는 스크립트.
@@ -24,15 +25,21 @@ MY_STOCKS = {
     "카카오": "035720"
 }
 
+ACTIVE_STOCKS = filter_stocks(MY_STOCKS)
+
 def update_stock_data():
     """종목별 5년치 OHLCV 데이터, 이동평균선, 다음날 방향(Target)을 저장한다."""
     if not os.path.exists('logs/raw_data'):
         os.makedirs('logs/raw_data')
         print("📁 'logs/raw_data' 폴더 생성 완료!")
 
-    print(f"🚀 [데이터 동기화] {len(MY_STOCKS)}개 종목 수집 시작!")
+    if not ACTIVE_STOCKS:
+        raise ValueError("STOCK_INCLUDE/STOCK_EXCLUDE 설정 후 실행할 종목이 없습니다.")
 
-    for name, code in MY_STOCKS.items():
+    print(f"🚀 [데이터 동기화] {len(ACTIVE_STOCKS)}개 종목 수집 시작!")
+    print(f"[STOCKS] {describe_stock_filter(len(MY_STOCKS), len(ACTIVE_STOCKS))}")
+
+    for name, code in ACTIVE_STOCKS.items():
         try:
             file_path = f"logs/raw_data/{name}_5year_data.csv"
             

@@ -14,6 +14,12 @@
 **오늘용 자동 분석 파일**과 **과거 데이터 백필 전용 파일**을 분리하여  
 실시간 분석과 과거 검증 흐름을 나누어 관리하고 있습니다.
 
+또한 최근에는 Streamlit 대시보드를 **3단 구조**로 재구성했습니다.
+
+- **1페이지 · 오늘의 요약**: 대표 뉴스와 종합 판단을 빠르게 훑어보는 메인 화면
+- **2페이지 · 결과 정리**: 상승 우세 / 관망 / 하락 주의 / 모델 충돌 종목을 카테고리별로 정리하는 화면
+- **3페이지 · 종목 상세**: 대표 뉴스, 종합 판단, 차트, 기준/비교 모델 상세를 깊게 확인하는 화면
+
 ---
 
 ## 💭 Why I Built This
@@ -141,25 +147,29 @@ Gemini는 위 세 가지 정보를 종합해 다음 항목을 생성합니다.
 
 ## 🖼️ 예제 화면
 
-### 1. 메인 대시보드
-전체 종목의 예측 결과와 확신도를 한눈에 확인할 수 있는 화면입니다.  
-상승 / 하락 / 관망 결과와 주요 뉴스 요약을 빠르게 훑어볼 수 있습니다.
+### 1. 1페이지 · 오늘의 요약
+대표 뉴스와 종합 판단을 카드 형태로 빠르게 확인하는 메인 화면입니다.  
+종목별 **종합예측 / 종합점수 / 대표 키워드 / 대표 뉴스 요약**을 한눈에 볼 수 있도록 구성했습니다.
 
-![메인 대시보드](images/dashboard_main.png)
+![1페이지 오늘의 요약](images/overview_page.png)
 
-### 2. 종목 상세 분석
-선택한 종목의 뉴스 요약, 뉴스 출처, 차트 판정, 패턴 판정, 핵심 사유를 상세히 보여주는 화면입니다.  
-AI가 왜 해당 종목을 상승 혹은 관망으로 판단했는지 근거를 확인할 수 있습니다.
+### 2. 2페이지 · 결과 정리 (상단)
+오늘 분석 결과를 카테고리별로 정리하는 화면입니다.  
+상승 우세 종목, 관망 종목, 하락 주의 종목, 모델 충돌 종목을 나누어 확인할 수 있습니다.
 
-![종목 상세 분석](images/detail_view.png)
+![2페이지 결과 정리 상단](images/summary_page_top.png)
 
-### 3. 차트 보기
-상세 화면에서 최근 주가 흐름과 이동평균선(MA20, MA60)을 함께 확인할 수 있는 차트 화면입니다.  
-기술적 흐름을 직관적으로 파악할 수 있도록 구성했습니다.
+### 3. 2페이지 · 결과 정리 (하단)
+뉴스 신뢰도가 높은 종목과 테마별 묶음을 추가로 확인하는 화면입니다.  
+단순 표 나열이 아니라, **오늘 결과를 해석 가능한 구조**로 정리하는 데 초점을 맞췄습니다.
 
-![차트 보기](images/chart_view.png)
+![2페이지 결과 정리 하단](images/summary_page_bottom.png)
 
----
+### 4. 3페이지 · 종목 상세
+선택한 종목의 대표 뉴스, 종합 판단, 뉴스 출처, 핵심 판단 이유를 먼저 보여주고,  
+기준 모델 / 비교 모델 상세와 차트는 접었다 펼칠 수 있도록 구성했습니다.
+
+![3페이지 종목 상세](images/detail_page.png)
 
 ## 🛠️ 기술 스택 (Tech Stack)
 
@@ -178,9 +188,10 @@ AI가 왜 해당 종목을 상승 혹은 관망으로 판단했는지 근거를 
 ```text
 Stock_Sentiment_Project/
 ├── images/
-│   ├── dashboard_main.png
-│   ├── detail_view.png
-│   └── chart_view.png
+│   ├── overview_page.png
+│   ├── summary_page_top.png
+│   ├── summary_page_bottom.png
+│   └── detail_page.png
 ├── src/
 │   ├── backfill_history.py      # 🕰️ 과거 데이터 백필 전용 분석 파일
 │   ├── evaluator.py             # 🎯 예측 결과 평가 / 성과 통합
@@ -189,7 +200,7 @@ Stock_Sentiment_Project/
 │   ├── main_auto.py             # 🚀 오늘용 자동 분석 엔진
 │   ├── update_data.py           # 📥 주가 데이터 업데이트
 │   ├── visualize.py             # 📊 시각화 관련 스크립트
-│   └── web_app.py               # 🌐 Streamlit 대시보드
+│   └── web_app.py               # 🌐 3페이지 구조 Streamlit 대시보드
 ├── run_pipeline.py              # 🔄 데이터 업데이트 → AI 분석 → 평가 → 대시보드 실행
 ├── logs/                        # 실행 시 생성되는 데이터 폴더 (Git 제외)
 │   ├── raw_data/                # 📦 종목별 원본 차트 데이터 (.csv)
@@ -211,6 +222,8 @@ Stock_Sentiment_Project/
 GOOGLE_API_KEY=your_google_api_key_here
 GEMINI_MODEL_NAME=gemini-2.5-flash
 GEMINI_COMPARE_MODEL_NAME=
+STOCK_INCLUDE=
+STOCK_EXCLUDE=
 ```
 
 `GEMINI_MODEL_NAME`을 바꾸면 Gemini 모델을 교체해 테스트할 수 있습니다.
@@ -225,6 +238,18 @@ GEMINI_COMPARE_MODEL_NAME=gemini-3-flash-preview
 ```
 
 비교 모델을 비워두면 기존처럼 기준 모델 하나만 실행합니다.
+
+특정 종목만 돌리거나 잠시 제외하려면 쉼표로 구분해 입력합니다. 종목명 또는 티커를 사용할 수 있습니다.
+
+```env
+# 이 종목만 실행
+STOCK_INCLUDE=NVDA,TSLA
+
+# 이 종목은 제외하고 실행
+STOCK_EXCLUDE=삼성전자,005930
+```
+
+`STOCK_INCLUDE`가 있으면 포함 목록이 우선 적용되고, 이후 `STOCK_EXCLUDE`에 적힌 종목은 제외됩니다.
 
 ---
 

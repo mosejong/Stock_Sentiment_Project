@@ -9,6 +9,7 @@ import requests
 import pandas as pd
 import google.generativeai as genai
 from dotenv import load_dotenv
+from stock_filter import describe_stock_filter, filter_stocks
 
 """
 과거 날짜 기준으로 종목별 AI 분석 리포트를 생성하는 백필 스크립트.
@@ -54,6 +55,8 @@ MY_STOCKS = {
     "포스코DX": "022100",
     "카카오": "035720"
 }
+
+ACTIVE_STOCKS = filter_stocks(MY_STOCKS)
 
 
 # =========================================================
@@ -596,11 +599,14 @@ confidence 기준:
 def run_auto_analysis_for_date(target_date: str):
     """특정 거래일 하루에 대해 전체 관심 종목을 분석하고 CSV에 추가 저장한다."""
     print(f"🚀 {target_date} 전 종목 과거 분석 시작")
+    if not ACTIVE_STOCKS:
+        raise ValueError("STOCK_INCLUDE/STOCK_EXCLUDE 설정 후 실행할 종목이 없습니다.")
+    print(f"[STOCKS] {describe_stock_filter(len(MY_STOCKS), len(ACTIVE_STOCKS))}")
     ensure_directory_exists(REPORT_PATH)
 
     results = []
 
-    for stock in MY_STOCKS.keys():
+    for stock in ACTIVE_STOCKS.keys():
         print(f"🔍 {stock} 분석 중... ({target_date})")
         analysis = get_ai_analysis(stock, target_date)
 
@@ -608,7 +614,7 @@ def run_auto_analysis_for_date(target_date: str):
             data = {
                 "날짜": target_date,
                 "종목명": stock,
-                "티커": MY_STOCKS[stock],
+                "티커": ACTIVE_STOCKS[stock],
                 "AI예측": analysis.get("prediction", "━ 관망"),
                 "확신도": str(analysis.get("confidence", "50")).replace("%", ""),
                 "핫키워드": analysis.get("keyword", "#미분류"),
@@ -623,7 +629,7 @@ def run_auto_analysis_for_date(target_date: str):
             data = {
                 "날짜": target_date,
                 "종목명": stock,
-                "티커": MY_STOCKS[stock],
+                "티커": ACTIVE_STOCKS[stock],
                 "AI예측": "━ 관망",
                 "확신도": "0",
                 "핫키워드": "분석실패",
