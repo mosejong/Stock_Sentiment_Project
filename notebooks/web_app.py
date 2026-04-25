@@ -1,7 +1,10 @@
 import streamlit as st
 import pandas as pd
 import os
+from pathlib import Path
 from datetime import datetime
+
+ROOT = Path(__file__).parent.parent
 
 # 1. 페이지 설정
 st.set_page_config(page_title="Gemini 2.5 전략 대시보드", page_icon="📈", layout="wide")
@@ -17,7 +20,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 def load_data():
-    file_path = "logs/daily_analysis_report.csv"
+    file_path = ROOT / "logs" / "daily_analysis_report.csv"
     if os.path.exists(file_path):
         try:
             df = pd.read_csv(file_path)

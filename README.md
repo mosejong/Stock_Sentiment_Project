@@ -1,6 +1,10 @@
 # 📈 Gemini 수석 애널리스트: AI 실시간 주식 전략 대시보드
 
-> **"실시간 뉴스와 기술적 지표를 결합한 LLM 기반 주식 분석 시스템"** ㅡㅡ+
+> **"실시간 뉴스와 기술적 지표를 결합한 LLM 기반 주식 분석 시스템"**
+
+## 👉 [라이브 데모 바로 보기](https://stock-sentiment-project.streamlit.app)
+
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://stock-sentiment-project.streamlit.app)
 
 이 프로젝트는 **Google Gemini AI**와 **실시간 구글 검색 기능**을 결합하여,  
 종목별 **뉴스 재료 / 기술적 지표 / 과거 패턴**을 함께 해석하고  
