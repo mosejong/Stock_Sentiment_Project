@@ -34,12 +34,24 @@ def main():
 
     print(f"\n{'-'*50}")
     print("모든 분석 작업이 완료되었습니다.")
-    print("잠시 후 Streamlit 대시보드를 실행합니다...")
     print(f"{'-'*50}\n")
-    
+
+    # 4단계: Git push → Streamlit Cloud 자동 반영
+    print("🔄 GitHub 업로드 중...")
+    git_result = subprocess.run(
+        'git add logs/daily_analysis_report.csv logs/total_performance.csv '
+        '&& git commit -m "data: 일일 분석 업데이트" '
+        '&& git push origin main',
+        shell=True
+    )
+    if git_result.returncode == 0:
+        print("✅ GitHub 업로드 완료! Streamlit 대시보드가 자동 반영됩니다.")
+    else:
+        print("⚠️ GitHub 업로드 실패 (변경사항 없거나 네트워크 오류)")
+
     time.sleep(2)
 
-    # 4단계: 웹 앱 실행 (Streamlit은 별도 프로세스로 실행)
+    # 5단계: 로컬 웹 앱 실행 (선택)
     subprocess.run([sys.executable, "-m", "streamlit", "run", "src/web_app.py"])
 
 if __name__ == "__main__":
