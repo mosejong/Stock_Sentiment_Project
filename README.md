@@ -2,9 +2,9 @@
 
 > **"실시간 뉴스와 기술적 지표를 결합한 LLM 기반 주식 분석 시스템"**
 
-## 👉 [라이브 데모 바로 보기](https://stock-sentiment-project.streamlit.app)
+## 👉 [라이브 데모 바로 보기](https://stocksentimentproject-ymnmfcjrgvxx53dttkzi84.streamlit.app)
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://stock-sentiment-project.streamlit.app)
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://stocksentimentproject-ymnmfcjrgvxx53dttkzi84.streamlit.app)
 
 > 배포 메인 파일: `src/web_app.py`
 
