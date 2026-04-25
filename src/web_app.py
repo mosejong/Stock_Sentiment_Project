@@ -1,9 +1,12 @@
 import os
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+
+ROOT = Path(__file__).parent.parent
 
 """
 Streamlit 대시보드.
@@ -132,7 +135,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-REPORT_PATH = "logs/daily_analysis_report.csv"
+REPORT_PATH = ROOT / "logs" / "daily_analysis_report.csv"
 PAGE_OPTIONS = [
     "1페이지 · 오늘의 요약",
     "2페이지 · 결과 정리",
@@ -163,8 +166,8 @@ def move_to_detail(stock_name: str):
 
 def load_stock_chart_data(stock_name: str, ticker: str):
     possible_paths = [
-        f"logs/raw_data/{stock_name}_5year_data.csv",
-        f"logs/raw_data/{ticker}_5year_data.csv",
+        str(ROOT / "logs" / "raw_data" / f"{stock_name}_5year_data.csv"),
+        str(ROOT / "logs" / "raw_data" / f"{ticker}_5year_data.csv"),
     ]
 
     for path in possible_paths:

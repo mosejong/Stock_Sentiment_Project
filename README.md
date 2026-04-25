@@ -6,6 +6,8 @@
 
 [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://stock-sentiment-project.streamlit.app)
 
+> 배포 메인 파일: `src/web_app.py`
+
 이 프로젝트는 **Google Gemini AI**와 **실시간 구글 검색 기능**을 결합하여,  
 종목별 **뉴스 재료 / 기술적 지표 / 과거 패턴**을 함께 해석하고  
 단기 투자 판단을 정리하는 **AI 주식 분석 프로젝트**입니다.
